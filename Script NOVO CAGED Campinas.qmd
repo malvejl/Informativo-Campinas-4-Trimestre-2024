@@ -1,0 +1,431 @@
+---
+title: "Script NOVO CAGED Campinas"
+format: html
+editor: visual
+---
+
+```{r}
+library(readr)
+library(archive)
+library(tidyverse)
+
+
+download_caged_data <- function(years, months, base_dir) {
+  # Create base directory if it doesn't exist
+  if (!dir.exists(base_dir)) {
+    dir.create(base_dir, recursive = TRUE)
+  }
+  
+  # Loop through each year and month combination
+  for (year in years) {
+    for (month in months) {
+      # Format month with leading zero if needed
+      month_fmt <- sprintf("%02d", month)
+      year_month <- paste0(year, month_fmt)
+      
+      # Create URL and destination path
+      url <- paste0("ftp://ftp.mtps.gov.br/pdet/microdados/NOVO%20CAGED/", year, "/", year_month, "/CAGEDMOV", year_month, ".7z")
+      dest_file <- file.path(base_dir, paste0("CAGEDMOV", year_month, ".7z"))
+      
+      # Download the file with tryCatch to handle errors
+      tryCatch({
+        message(paste("Downloading:", year_month))
+        download.file(url, destfile = dest_file, mode = "wb")
+        message(paste("Successfully downloaded:", year_month))
+      }, error = function(e) {
+        warning(paste("Failed to download:", year_month, "-", e$message))
+      })
+    }
+  }
+}
+
+# Example usage:
+base_dir <- "C://Users/malve/Documents/Observatório PUC Camp/Informativos/Informativos Campinas/Informativo Campinas 4 Trimestre 2024"
+
+# Download last 12 months (assuming current date is March 2025)
+download_caged_data(
+  years = c(2024),
+  months = c(1:12),  
+  base_dir = base_dir
+)
+
+
+# Downloads por mês (arquivo comprimido)
+# 2024
+#download.file("ftp://ftp.mtps.gov.br/pdet/microdados/NOVO%20CAGED/2024",
+#  destfile = "C://Users/malve/Documents/Observatório PUC Camp/Informativos/Informativos Campinas/Informativo Campinas 4 Trimestre 2024/CAGEDMOV2024.7z",
+#  mode = "wb")
+```
+
+
+```{r}
+# Tabela 1 - Montagem do banco de dados
+library(archive)
+library(readr)
+library(dplyr)
+
+process_caged_months <- function(base_dir, year, months = 1:12) {
+  # Initialize an empty list to store monthly results
+  monthly_results <- list()
+  
+  # Iterate through specified months
+  for (month in months) {
+    # Format month with leading zero
+    month_fmt <- sprintf("%02d", month)
+    year_month <- paste0(year, month_fmt)
+    
+    # Construct file path
+    file_path <- file.path(
+      base_dir, 
+      paste0("CAGEDMOV", year_month, ".7z")
+    )
+    
+    # Check if file exists
+    if (!file.exists(file_path)) {
+      warning(paste("File not found:", file_path))
+      next
+    }
+    
+    # Read and process the archive
+    tryCatch({
+      # Read the 7z archive
+      dados <- archive::archive_read(file_path)
+      
+      # Process the data
+      monthly_data <- read_csv2(
+        dados, 
+        locale = locale(decimal_mark = ",", grouping_mark = "."),
+        show_col_types = FALSE
+      ) %>%
+        group_by(município) %>% 
+        summarise(saldomovimentação = sum(saldomovimentação)) %>%
+        # Add month and year columns
+        mutate(
+          mes = month_fmt,
+          ano = year
+        )
+      
+      # Store in list
+      monthly_results[[month_fmt]] <- monthly_data
+      
+      cat(paste("Processed data for", year_month, "\n"))
+    }, error = function(e) {
+      warning(paste("Error processing", year_month, ":", e$message))
+    })
+  }
+  
+  # Combine all monthly results
+  if (length(monthly_results) > 0) {
+    combined_data <- bind_rows(monthly_results)
+    
+    # Print summary
+    cat("\nData Extraction Summary:\n")
+    cat("Months processed:", paste(names(monthly_results), collapse = ", "), "\n")
+    cat("Total rows:", nrow(combined_data), "\n")
+    
+    return(combined_data)
+  } else {
+    stop("No data could be extracted.")
+  }
+}
+
+# Set base directory
+base_dir <- "C://Users/malve/Documents/Observatório PUC Camp/Informativos/Informativos Campinas/Informativo Campinas 4 Trimestre 2024"
+
+# Process data for 2024
+caged_data <- process_caged_months(
+  base_dir = base_dir, 
+  year = 2024,
+  months = 1:12  # You can modify this to specific months if needed
+)
+
+# Save the consolidated data
+write_csv(caged_data, file.path(base_dir, "caged_monthly_summary_2024.csv"))
+
+# Optional: Quick view of the data
+print(caged_data)
+```
+
+
+```{r}
+library(archive)
+library(readr)
+library(dplyr)
+library(tidyr)
+
+process_caged_months <- function(base_dir, year, selected_months = c(10, 11, 12)) {
+  # Initialize an empty list to store monthly results.
+  monthly_results <- list()
+  
+  # Variable to store full year data
+  full_year_data <- NULL
+  
+  # Iterate through all 12 months for full year data
+  for (month in 1:12) {
+    # Format month with leading zero
+    month_fmt <- sprintf("%02d", month)
+    year_month <- paste0(year, month_fmt)
+    
+    # Construct file path
+    file_path <- file.path(
+      base_dir, 
+      paste0("CAGEDMOV", year_month, ".7z")
+    )
+    
+    # Check if file exists
+    if (!file.exists(file_path)) {
+      warning(paste("File not found:", file_path))
+      next
+    }
+    
+    tryCatch({
+      # Read the 7z archive
+      dados <- archive::archive_read(file_path)
+      
+      # Process the data
+      monthly_data <- read_csv2(
+        dados, 
+        locale = locale(decimal_mark = ",", grouping_mark = "."),
+        show_col_types = FALSE
+      ) %>% 
+        group_by(município) %>% 
+        summarise(saldomovimentação = sum(saldomovimentação), .groups = "drop")
+      
+      # Accumulate full year data
+      if (is.null(full_year_data)) {
+        full_year_data <- monthly_data
+      } else {
+        full_year_data <- full_year_data %>%
+          full_join(monthly_data, by = "município") %>%
+          mutate(saldomovimentação = coalesce(saldomovimentação.x, 0) + coalesce(saldomovimentação.y, 0)) %>%
+          select(município, saldomovimentação)
+      }
+      
+      # Process only selected months
+      if (month %in% selected_months) {
+        monthly_data <- monthly_data %>%
+          rename(!!paste0("mes_", month_fmt) := saldomovimentação)
+        monthly_results[[month_fmt]] <- monthly_data
+      }
+      
+      cat(paste("Processed data for", year_month, "\n"))
+    }, error = function(e) {
+      warning(paste("Error processing", year_month, ":", e$message))
+    })
+  }
+  
+  # Rename total column and ensure we have some data
+  if (!is.null(full_year_data)) {
+    full_year_data <- full_year_data %>%
+      rename(total_2024 = saldomovimentação)
+  } else {
+    stop("No full-year data could be extracted.")
+  }
+  
+  # Combine selected months results
+  if (length(monthly_results) > 0) {
+    # Merge all selected months into a single dataset
+    monthly_combined <- Reduce(function(x, y) full_join(x, y, by = "município"), monthly_results)
+    
+    # Merge full year total with monthly data
+    combined_data <- full_year_data %>%
+      left_join(monthly_combined, by = "município")
+    
+    # Fill missing values with zero
+    combined_data[is.na(combined_data)] <- 0
+    
+    # Print summary
+    cat("\nData Extraction Summary:\n")
+    cat("Months processed:", paste(names(monthly_results), collapse = ", "), "\n")
+    cat("Total rows:", nrow(combined_data), "\n")
+    
+   return(combined_data)
+  } else {
+    stop("No data could be extracted for the selected months.")
+  }
+}
+
+# Set base directory
+base_dir <- "C://Users/malve/Documents/Observatório PUC Camp/Informativos/Informativos Campinas/Informativo Campinas 4 Trimestre 2024"
+
+# Process data for 2024
+caged_data_tab1 <- process_caged_months(
+  base_dir = base_dir, 
+  year = 2024,
+  selected_months = c(10, 11, 12)
+)
+
+# Save the consolidated data
+write_csv(caged_data_tab1, file.path(base_dir, "caged_summary_2024_table1.csv"))
+
+# Optional: Quick view of the data
+print(caged_data_tab1)
+```
+
+```{r}
+table1 <- caged_data_tab1 %>%
+  group_by(município) %>%
+  mutate(Categoria = case_when(
+    município == 350950 ~ "Campinas",
+    str_starts(as.character(município), "35") ~ "RMC"
+  ))
+
+library(dplyr)
+library(stringr)
+
+# 1. Tabela com categorias específicas
+table1_categorias <- caged_data_tab1 %>%
+  mutate(
+    Category = case_when(
+      município == 350950 ~ "Campinas",
+      município %in% c(350160, 350380, 350950, 351280, 351515, 351905, 351907, 352050, 352340, 352470, 353180, 353205, 353340, 353650, 353710, 354580, 354800, 355240, 355620, 355670) ~ "RMC",
+      str_starts(as.character(município), "35") ~ "São Paulo",
+      TRUE ~ "Outros" # para não incluir no Brasil, mudei o TRUE para outros para não conflitar com o Brasil total
+    )
+  ) %>%
+  group_by(Category) %>%
+  summarise(
+    Outubro = sum(mes_10, na.rm = TRUE),
+    Novembro = sum(mes_11, na.rm = TRUE),
+    Dezembro = sum(mes_12, na.rm = TRUE),
+    Acumulado_2024 = sum(total_2024, na.rm = TRUE)
+  ) %>% 
+  filter(Category != "Outros")
+
+
+# 2. Linha com o total do Brasil
+table1_brasil <- caged_data_tab1 %>%
+  summarise(
+    Category = "Brasil",
+    Outubro = sum(mes_10, na.rm = TRUE),
+    Novembro = sum(mes_11, na.rm = TRUE),
+    Dezembro = sum(mes_12, na.rm = TRUE),
+    Acumulado_2024 = sum(total_2024, na.rm = TRUE)
+  )
+
+# 3. Combinar as duas partes
+table1 <- bind_rows(table1_categorias, table1_brasil)
+
+# 4. Formular os percentuais
+```
+
+```{r}
+# Tabela 2
+library(ggplot2)
+
+process_caged_months <- function(base_dir, year, selected_months, municípios_selecionados) {
+  # Initialize an empty list to store monthly results.
+  monthly_results <- list()
+  
+  # Variable to store full year data
+  full_year_data <- NULL
+  
+  # Iterate through all 12 months for full year data
+  for (month in 1:12) {
+    # Format month with leading zero
+    month_fmt <- sprintf("%02d", month)
+    year_month <- paste0(year, month_fmt)
+    
+    # Construct file path
+    file_path <- file.path(
+      base_dir, 
+      paste0("CAGEDMOV", year_month, ".7z")
+    )
+    
+    # Check if file exists
+    if (!file.exists(file_path)) {
+      warning(paste("File not found:", file_path))
+      next
+    }
+    
+    tryCatch({
+      # Read the 7z archive
+      dados <- archive::archive_read(file_path)
+      
+      # Process the data
+      monthly_data <- read_csv2(
+        dados, 
+        locale = locale(decimal_mark = ",", grouping_mark = "."),
+        show_col_types = FALSE
+      ) %>% 
+        group_by(município) %>% 
+        filter(município %in% c(350160, 350380, 350950, 351280, 351515, 351905, 351907, 352050, 352340, 352470, 353180, 353205, 353340, 353650, 353710, 354580, 354800, 355240, 355620, 355670)) %>% 
+        summarise(saldomovimentação = sum(saldomovimentação), .groups = "drop")
+      
+      # Accumulate full year data
+      if (is.null(full_year_data)) {
+        full_year_data <- monthly_data
+      } else {
+        full_year_data <- full_year_data %>%
+          full_join(monthly_data, by = "município") %>%
+          mutate(saldomovimentação = coalesce(saldomovimentação.x, 0) + coalesce(saldomovimentação.y, 0)) %>%
+          select(município, saldomovimentação)
+      }
+      
+      # Process only selected months
+      if (month %in% selected_months) {
+        monthly_data <- monthly_data %>%
+          rename(!!paste0("mes_", month_fmt) := saldomovimentação)
+        monthly_results[[month_fmt]] <- monthly_data
+      }
+      
+      cat(paste("Processed data for", year_month, "\n"))
+    }, error = function(e) {
+      warning(paste("Error processing", year_month, ":", e$message))
+    })
+  }
+  
+  # Rename total column and ensure we have some data
+  if (!is.null(full_year_data)) {
+    full_year_data <- full_year_data %>%
+      rename(total_2024 = saldomovimentação)
+  } else {
+    stop("No full-year data could be extracted.")
+  }
+  
+  # Combine selected months results
+  if (length(monthly_results) > 0) {
+    # Merge all selected months into a single dataset
+    monthly_combined <- Reduce(function(x, y) full_join(x, y, by = "município"), monthly_results)
+    
+    # Merge full year total with monthly data
+    combined_data <- full_year_data %>%
+      left_join(monthly_combined, by = "município")
+    
+    # Fill missing values with zero
+    combined_data[is.na(combined_data)] <- 0
+    
+    # Print summary
+    cat("\nData Extraction Summary:\n")
+    cat("Months processed:", paste(names(monthly_results), collapse = ", "), "\n")
+    cat("Total rows:", nrow(combined_data), "\n")
+    
+   return(combined_data)
+  } else {
+    stop("No data could be extracted for the selected months.")
+  }
+}
+
+# Set base directory
+base_dir <- "C://Users/malve/Documents/Observatório PUC Camp/Informativos/Informativos Campinas/Informativo Campinas 4 Trimestre 2024"
+
+# Process data for 2024
+caged_data_tab1 <- process_caged_months(
+  base_dir = base_dir, 
+  year = 2024,
+  selected_months = c(8, 9, 10, 11, 12))
+
+# Process data for 2023
+caged_data_tab1 <- process_caged_months(
+  base_dir = base_dir, 
+  year = 2023,
+  selected_months = c(8, 9, 10, 11, 12))
+
+# Process data for 2022
+caged_data_tab1 <- process_caged_months(
+  base_dir = base_dir, 
+  year = 2022,
+  selected_months = c(8, 9, 10, 11, 12))
+
+
+```
